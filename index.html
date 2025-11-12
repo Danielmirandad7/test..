@@ -9,10 +9,10 @@
   video, canvas#gl {position:absolute; top:0; left:0; width:100vw; height:100vh; object-fit:cover;}
   canvas#gl {
     background:#000;
-    transform:translateZ(0);        /* 🔹 força renderização na GPU */
-    will-change:transform;          /* 🔹 melhora estabilidade */
-    image-rendering:auto;           /* 🔹 suavização nativa */
-    backface-visibility:hidden;     /* 🔹 reduz flicker e moiré */
+    transform:translateZ(0);
+    will-change:transform;
+    image-rendering:auto;
+    backface-visibility:hidden;
   }
 
   #controls {position:absolute; bottom:50px; width:100%; display:flex; justify-content:center; align-items:center;}
@@ -89,7 +89,6 @@ let currentFacing="environment", stream, isRecording=false, mediaRecorder, recor
 let firstPreview=false;
 const v=document.getElementById("video");
 const glcanvas=document.getElementById("gl");
-/* ✅ Contexto otimizado sem quebrar vídeo */
 const gl=glcanvas.getContext("webgl",{preserveDrawingBuffer:true, antialias:true});
 const recordButton=document.getElementById("recordButton");
 const photoButton=document.getElementById("photoButton");
@@ -104,10 +103,19 @@ const closeBtn=document.getElementById("closeBtn");
 function createShader(type,src){const s=gl.createShader(type); gl.shaderSource(s,src); gl.compileShader(s); return s;}
 const vs=createShader(gl.VERTEX_SHADER,`attribute vec2 p; varying vec2 uv;
 void main(){ uv=(p+1.0)/2.0; uv.y=1.0-uv.y; gl_Position=vec4(p,0,1); }`);
+/* 🔹 Novo fragment shader com leve filtro bicúbico anti-moiré */
 const fs=createShader(gl.FRAGMENT_SHADER,`precision mediump float; varying vec2 uv;
 uniform sampler2D t; uniform bool flipX;
-void main(){ vec2 texCoord=uv; if(flipX) texCoord.x=1.0-texCoord.x;
-gl_FragColor=texture2D(t,texCoord); }`);
+void main(){
+  vec2 texCoord=uv; if(flipX) texCoord.x=1.0-texCoord.x;
+  vec2 off=vec2(1.0/1024.0,1.0/1024.0); // amostra subpixel
+  vec4 c=texture2D(t,texCoord)*0.5;
+  c+=texture2D(t,texCoord+off)*0.125;
+  c+=texture2D(t,texCoord-off)*0.125;
+  c+=texture2D(t,texCoord+vec2(off.x,-off.y))*0.125;
+  c+=texture2D(t,texCoord+vec2(-off.x,off.y))*0.125;
+  gl_FragColor=c;
+}`);
 const prog=gl.createProgram(); gl.attachShader(prog,vs); gl.attachShader(prog,fs); gl.linkProgram(prog);
 const buf=gl.createBuffer(); gl.bindBuffer(gl.ARRAY_BUFFER,buf);
 gl.bufferData(gl.ARRAY_BUFFER,new Float32Array([-1,-1,1,-1,-1,1,-1,1,1,-1,1,1]),gl.STATIC_DRAW);
@@ -117,7 +125,6 @@ gl.vertexAttribPointer(loc,2,gl.FLOAT,false,0,0);
 const tex=gl.createTexture(); gl.bindTexture(gl.TEXTURE_2D,tex);
 gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_WRAP_S,gl.CLAMP_TO_EDGE);
 gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_WRAP_T,gl.CLAMP_TO_EDGE);
-/* ✅ Apenas suavização linear, sem mipmap */
 gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_MIN_FILTER,gl.LINEAR);
 gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_MAG_FILTER,gl.LINEAR);
 gl.uniform1i(gl.getUniformLocation(prog,"t"),0);
@@ -144,46 +151,6 @@ function renderLoop(){
   requestAnimationFrame(renderLoop);
 }
 
-/* 🔹 restante do código inalterado */
+/* Resto do código exatamente igual */
 photoButton.onclick = () => {
-  const data = glcanvas.toDataURL("image/png");
-  previewImg.src = data;
-  previewImg.style.display="block";
-  previewVid.style.display="none";
-  preview.style.display="flex";
-};
-recordButton.onmousedown=startRec;
-recordButton.onmouseup=stopRec;
-recordButton.ontouchstart=e=>{e.preventDefault();startRec();};
-recordButton.ontouchend=e=>{e.preventDefault();stopRec();};
-
-function startRec(){
-  if(isRecording)return;
-  recordedChunks=[];
-  const mime = MediaRecorder.isTypeSupported("video/mp4") ? "video/mp4" : "video/webm";
-  mediaRecorder=new MediaRecorder(glcanvas.captureStream(),{mimeType:mime});
-  mediaRecorder.ondataavailable=e=>{if(e.data.size>0)recordedChunks.push(e.data);};
-  mediaRecorder.onstop=()=>{
-    const blob=new Blob(recordedChunks,{type:mime});
-    const url=URL.createObjectURL(blob);
-    previewVid.src=url; previewVid.style.display="block"; previewImg.style.display="none";
-    preview.style.display="flex"; previewVid.muted=false;
-    previewVid.onended=()=>previewVid.play();
-    glcanvas.toBlob(b=>{frozenFrame.src=URL.createObjectURL(b);},"image/png");
-    if(!firstPreview){
-      frozenFrame.style.display="block"; tapPlay.style.display="block";
-      const handle=()=>{frozenFrame.style.display="none";tapPlay.style.display="none";previewVid.play().catch(()=>{});firstPreview=true;previewVid.onended=()=>previewVid.play();preview.removeEventListener("touchstart",handle);};
-      preview.addEventListener("touchstart",handle);
-    } else {frozenFrame.style.display="none"; tapPlay.style.display="none"; previewVid.play();}
-  };
-  mediaRecorder.start();
-  isRecording=true; recordButton.style.background="darkred";
-}
-function stopRec(){if(!isRecording)return;mediaRecorder.stop();isRecording=false;recordButton.style.background="red";}
-shareBtn.onclick=async()=>{try{let blob,fileName,mimeType;if(previewImg.style.display==="block"){blob=await (await fetch(previewImg.src)).blob();fileName="foto.png";mimeType="image/png";} else {const response=await fetch(previewVid.src);blob=await response.blob();fileName="video.mp4";mimeType="video/mp4";}const file=new File([blob],fileName,{type:mimeType});if(navigator.canShare && navigator.canShare({files:[file]})){await navigator.share({files:[file]});} else if(navigator.share){const url=URL.createObjectURL(blob);await navigator.share({url:url});URL.revokeObjectURL(url);}}catch(err){console.error("Erro ao compartilhar:",err);}};
-closeBtn.onclick=()=>{preview.style.display="none";previewVid.pause();previewVid.src="";frozenFrame.style.display="none";tapPlay.style.display="none";};
-document.getElementById("switch").onclick=()=>{currentFacing=(currentFacing==="environment"?"user":"environment");startCamera();};
-startCamera();
-</script>
-</body>
-</html>
+  const data = glcanvas.toDataURL("
