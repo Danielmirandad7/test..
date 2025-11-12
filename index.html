@@ -153,4 +153,44 @@ function renderLoop(){
 
 /* Resto do código exatamente igual */
 photoButton.onclick = () => {
-  const data = glcanvas.toDataURL("
+  const data = glcanvas.toDataURL("image/png");
+  previewImg.src = data;
+  previewImg.style.display="block";
+  previewVid.style.display="none";
+  preview.style.display="flex";
+};
+recordButton.onmousedown=startRec;
+recordButton.onmouseup=stopRec;
+recordButton.ontouchstart=e=>{e.preventDefault();startRec();};
+recordButton.ontouchend=e=>{e.preventDefault();stopRec();};
+
+function startRec(){
+  if(isRecording)return;
+  recordedChunks=[];
+  const mime = MediaRecorder.isTypeSupported("video/mp4") ? "video/mp4" : "video/webm";
+  mediaRecorder=new MediaRecorder(glcanvas.captureStream(),{mimeType:mime});
+  mediaRecorder.ondataavailable=e=>{if(e.data.size>0)recordedChunks.push(e.data);};
+  mediaRecorder.onstop=()=>{
+    const blob=new Blob(recordedChunks,{type:mime});
+    const url=URL.createObjectURL(blob);
+    previewVid.src=url; previewVid.style.display="block"; previewImg.style.display="none";
+    preview.style.display="flex"; previewVid.muted=false;
+    previewVid.onended=()=>previewVid.play();
+    glcanvas.toBlob(b=>{frozenFrame.src=URL.createObjectURL(b);},"image/png");
+    if(!firstPreview){
+      frozenFrame.style.display="block"; tapPlay.style.display="block";
+      const handle=()=>{frozenFrame.style.display="none";tapPlay.style.display="none";previewVid.play().catch(()=>{});firstPreview=true;previewVid.onended=()=>previewVid.play();preview.removeEventListener("touchstart",handle);};
+      preview.addEventListener("touchstart",handle);
+    } else {frozenFrame.style.display="none"; tapPlay.style.display="none"; previewVid.play();}
+  };
+  mediaRecorder.start();
+  isRecording=true; recordButton.style.background="darkred";
+}
+function stopRec(){if(!isRecording)return;mediaRecorder.stop();isRecording=false;recordButton.style.background="red";}
+shareBtn.onclick=async()=>{try{let blob,fileName,mimeType;if(previewImg.style.display==="block"){blob=await (await fetch(previewImg.src)).blob();fileName="foto.png";mimeType="image/png";} else {const response=await fetch(previewVid.src);blob=await response.blob();fileName="video.mp4";mimeType="video/mp4";}const file=new File([blob],fileName,{type:mimeType});if(navigator.canShare && navigator.canShare({files:[file]})){await navigator.share({files:[file]});} else if(navigator.share){const url=URL.createObjectURL(blob);await navigator.share({url:url});URL.revokeObjectURL(url);}}catch(err){console.error("Erro ao compartilhar:",err);}};
+closeBtn.onclick=()=>{preview.style.display="none";previewVid.pause();previewVid.src="";frozenFrame.style.display="none";tapPlay.style.display="none";};
+document.getElementById("switch").onclick=()=>{currentFacing=(currentFacing==="environment"?"user":"environment");startCamera();};
+startCamera();
+</script>
+</body>
+</html>
